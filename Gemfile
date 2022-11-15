@@ -7,3 +7,5 @@ group :development do
   gem "rake"
   gem "test-unit"
 end
+
+gem "net-imap", github: "nevans/net-imap", branch: "sasl-sasl-sasl"

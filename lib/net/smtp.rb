@@ -831,42 +831,64 @@ module Net
 
     DEFAULT_AUTH_TYPE = :plain
 
-    def authenticate(user, secret, authtype = DEFAULT_AUTH_TYPE)
-      check_auth_method authtype
-      check_auth_args user, secret
-      public_send auth_method(authtype), user, secret
+    def authenticate(user = nil, secret = nil,
+                     authtype = DEFAULT_AUTH_TYPE,
+                     **opts, &callback)
+      mechanism = authtype.to_s.tr("_", "-").upcase
+      auth_sasl(mechanism, user, secret, **opts, &callback)
     end
 
-    def auth_plain(user, secret)
-      check_auth_args user, secret
-      res = critical {
-        get_response('AUTH PLAIN ' + base64_encode("\0#{user}\0#{secret}"))
+    # experimental SASL support, sharing the implementation with net-imap
+    def auth_sasl(mech, *args, **opts, &callback)
+      require "net/imap"
+      sasl = Net::IMAP.authenticator(mech, *args, **opts, &callback)
+      resp = nil
+      critical {
+        reply = if sasl.respond_to?(:initial_response?) && sasl.initial_response?
+                  sasl.process(nil)
+                    &.then {|r| base64_encode r }
+                end
+        cmd  = ["AUTH", mech.upcase, reply].compact.join(" ")
+        resp = get_response cmd
+        while resp.continue?
+          challenge = resp.cram_md5_challenge # gets any SASL challenge string
+          reply     = sasl.process challenge
+          resp      = get_response base64_encode(reply)
+        end
       }
-      check_auth_response res
-      res
+      if sasl.respond_to?(:done?) && !sasl.done?
+        check_auth_continue resp # we exited the loop, so we know this will fail
+      end
+      check_auth_response resp
+      resp
     end
 
-    def auth_login(user, secret)
-      check_auth_args user, secret
-      res = critical {
-        check_auth_continue get_response('AUTH LOGIN')
-        check_auth_continue get_response(base64_encode(user))
-        get_response(base64_encode(secret))
-      }
-      check_auth_response res
-      res
+    def auth_xoauth2(*args, **opts, &callback)
+      auth_sasl("XOAUTH2", *args, **opts, &callback)
     end
 
-    def auth_cram_md5(user, secret)
-      check_auth_args user, secret
-      res = critical {
-        res0 = get_response('AUTH CRAM-MD5')
-        check_auth_continue res0
-        crammed = cram_md5_response(secret, res0.cram_md5_challenge)
-        get_response(base64_encode("#{user} #{crammed}"))
-      }
-      check_auth_response res
-      res
+    def auth_digest_md5(*args, **opts, &callback)
+      auth_sasl("DIGEST-MD5", *args, service: "smtp", **opts, &callback)
+    end
+
+    def auth_external(*args, **opts, &callback)
+      auth_sasl("EXTERNAL", *args, **opts, &callback)
+    end
+
+    def auth_anonymous(*args, **opts, &callback)
+      auth_sasl("ANONYMOUS", *args, **opts, &callback)
+    end
+
+    def auth_plain(*args, **opts, &callback)
+      auth_sasl("PLAIN", *args, **opts, &callback)
+    end
+
+    def auth_login(*args, **opts, &callback)
+      auth_sasl("LOGIN", *args, **opts, &callback)
+    end
+
+    def auth_cram_md5(*args, **opts, &callback)
+      auth_sasl("CRAM-MD5", *args, **opts, &callback)
     end
 
     private
