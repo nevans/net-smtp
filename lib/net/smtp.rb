@@ -651,9 +651,9 @@ module Net
     end
 
     # Finishes the SMTP session and closes TCP connection.
-    # Raises IOError if not started.
+    # Raises IOError if not yet connected.
     def finish
-      raise IOError, 'not yet started' unless started?
+      raise IOError, 'not yet started' unless @socket
       do_finish
     end
 
